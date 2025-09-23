@@ -1,7 +1,14 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore } from '@/features/auth/store'
 
-const apiBaseURL = import.meta.env.VITE_API_BASE_URL as string
+const envBaseURL = import.meta.env.VITE_API_BASE_URL
+const computedBaseURL =
+    typeof envBaseURL === 'string' && envBaseURL.trim().length > 0
+        ? envBaseURL
+        : '/api'
+const apiBaseURL = computedBaseURL === '/' ? '/' : computedBaseURL.replace(/\/+$/, '')
+
+const buildAbsoluteURL = (path: string) => (apiBaseURL === '/' ? path : `${apiBaseURL}${path}`)
 
 export const api: AxiosInstance = axios.create({
     baseURL: apiBaseURL,
@@ -46,7 +53,7 @@ api.interceptors.response.use(
             }
             isRefreshing = true
             try {
-                const resp = await axios.post(`${apiBaseURL}/auth/refresh`, { refresh: refreshToken })
+                const resp = await axios.post(buildAbsoluteURL('/auth/refresh'), { refresh: refreshToken })
                 const newAccess = (resp.data as any).access as string
                 setTokens({ accessToken: newAccess, refreshToken })
                 onRefreshed()
