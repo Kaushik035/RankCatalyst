@@ -1,13 +1,35 @@
-Django==5.0.7
-djangorestframework==3.15.2
-djangorestframework-simplejwt[crypto]==5.3.1
-django-cors-headers==4.4.0
-psycopg2-binary==2.9.9
-python-dotenv==1.0.1
-PyJWT==2.9.0
-# dev
+Django>=4.2,<5.0
+djangorestframework>=3.15.0
+djangorestframework-simplejwt[crypto]>=5.3.0
+django-cors-headers>=4.4.0
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.1
+PyJWT>=2.9.0
+
+# WebSocket and async support
+channels>=4.0.0
+channels-redis>=4.2.0
+daphne>=4.0.0
+
+# Celery for background tasks
+celery>=5.3.0
+django-celery-beat>=2.5.0
+redis>=5.0.0
+
+# Data processing
+numpy==1.26.4
+pandas==2.2.2
+ujson==5.9.0
+
+# Testing
 pytest==8.3.2
 pytest-django==4.8.0
+freezegun==1.4.0
+
+# Static files serving
+whitenoise==6.6.0
+
+# Linting and formatting
 black==24.8.0
 isort==5.13.2
 ruff==0.6.3

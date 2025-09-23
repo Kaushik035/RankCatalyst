@@ -20,6 +20,9 @@ RUN pip install -r /tmp/requirements.txt
 
 COPY . /app
 
+# Create static directory
+RUN mkdir -p /app/staticfiles /app/static
+
 EXPOSE 8000
 
-CMD ["sh", "-c", "python scripts/wait_for_db.py && python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+CMD ["sh", "-c", "python scripts/wait_for_db.py && python manage.py migrate && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 8000 rankcatalyst.asgi:application"]

@@ -29,6 +29,16 @@ superuser:
 shell:
 	$(COMPOSE) exec backend python manage.py shell
 
+# --- WebSocket and async services ---
+ws:
+	$(COMPOSE) exec backend daphne -b 0.0.0.0 -p 8000 rankcatalyst.asgi:application
+
+worker:
+	$(COMPOSE) exec backend celery -A rankcatalyst worker -l info
+
+beat:
+	$(COMPOSE) exec backend celery -A rankcatalyst beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
 # --- Tests ---
 test-back:
 	$(COMPOSE) exec backend pytest -q

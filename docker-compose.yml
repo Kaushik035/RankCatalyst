@@ -19,6 +19,20 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: rc_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -29,11 +43,56 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    command: ["sh", "-c", "python scripts/wait_for_db.py && python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+      - static_volume:/app/staticfiles
+    command: ["sh", "-c", "python scripts/wait_for_db.py && python manage.py migrate && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 8000 rankcatalyst.asgi:application"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/attention/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  celery:
+    build:
+      context: ./backend
+    container_name: rc_celery
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: ["celery", "-A", "rankcatalyst", "worker", "-l", "info"]
+    healthcheck:
+      test: ["CMD", "celery", "-A", "rankcatalyst", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  celery-beat:
+    build:
+      context: ./backend
+    container_name: rc_celery_beat
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: ["celery", "-A", "rankcatalyst", "beat", "-l", "info", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
 
   frontend:
     build:
@@ -49,6 +108,13 @@ services:
     volumes:
       - ./frontend:/app
     command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5173"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5173/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   db_data:
+  redis_data:
+  static_volume:

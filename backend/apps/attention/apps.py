@@ -1,0 +1,14 @@
+"""
+Attention tracking app configuration.
+"""
+from django.apps import AppConfig
+
+
+class AttentionConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.attention"
+    verbose_name = "Attention Tracking"
+
+    def ready(self):
+        """Import signal handlers when the app is ready."""
+        import apps.attention.signals  # noqa
