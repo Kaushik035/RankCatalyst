@@ -2,6 +2,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useAuthStore } from '@/features/auth/store'
+import { useNavigate } from 'react-router-dom'
 
 const schema = z.object({
     email: z.string().email(),
@@ -14,10 +15,18 @@ type FormData = z.infer<typeof schema>
 export default function Register() {
     const { register: reg, handleSubmit, formState: { errors, isSubmitting }, reset } = useForm<FormData>({ resolver: zodResolver(schema) })
     const doRegister = useAuthStore((s) => s.register)
+    const navigate = useNavigate()
+    
     const onSubmit = async (data: FormData) => {
-        await doRegister(data.email, data.password, data.displayName)
-        reset()
-        alert('Registered. Check your email to verify.')
+        try {
+            await doRegister(data.email, data.password, data.displayName)
+            reset()
+            alert('Registered. Check your email to verify.')
+            navigate('/login')
+        } catch (error) {
+            console.error('Registration failed:', error)
+            alert('Registration failed. Please try again.')
+        }
     }
     return (
         <main className="max-w-md mx-auto px-4 py-10">

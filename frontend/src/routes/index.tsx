@@ -1,4 +1,5 @@
 import { Route, Routes, Navigate } from 'react-router-dom'
+import { useCallback } from 'react'
 import Login from './auth/Login'
 import Register from './auth/Register'
 import VerifyEmail from './auth/VerifyEmail'
@@ -40,6 +41,26 @@ function Dashboard() {
     )
 }
 
+// Gaze Session component with stable callbacks
+function GazeSessionWrapper() {
+    const handleSessionEnd = useCallback((sessionId: string, analytics: any) => {
+        console.log('Session ended:', sessionId, analytics)
+    }, [])
+
+    const handleSessionError = useCallback((error: string) => {
+        console.error('Session error:', error)
+    }, [])
+
+    return (
+        <GazeSession 
+            lessonId={undefined} 
+            deviceInfo={{}} 
+            onSessionEnd={handleSessionEnd} 
+            onError={handleSessionError} 
+        />
+    )
+}
+
 export default function RoutesIndex() {
     return (
         <Routes>
@@ -52,7 +73,7 @@ export default function RoutesIndex() {
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             
             {/* Attention tracking routes */}
-            <Route path="/attention/session" element={<ProtectedRoute><GazeSession lessonId={undefined} deviceInfo={{}} onSessionEnd={() => {}} onError={() => {}} /></ProtectedRoute>} />
+            <Route path="/attention/session" element={<ProtectedRoute><GazeSessionWrapper /></ProtectedRoute>} />
             <Route path="/attention/sessions" element={<ProtectedRoute><SessionList /></ProtectedRoute>} />
             <Route path="/attention/sessions/:sessionId" element={<ProtectedRoute><SessionDetail /></ProtectedRoute>} />
             

@@ -21,6 +21,7 @@ export default function Login() {
             await doLogin(data.email, data.password)
             navigate('/dashboard')
         } catch (e: any) {
+            console.error('Login failed:', e)
             setError('email', { message: 'Invalid credentials' })
         }
     }

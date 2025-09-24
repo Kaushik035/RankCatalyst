@@ -109,6 +109,7 @@ export function useWebGazer(config: Partial<WebGazerConfig> = {}) {
 
     try {
       // Check camera permissions
+      console.log('Requesting camera permission...')
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           width: { ideal: 640 },
@@ -116,6 +117,7 @@ export function useWebGazer(config: Partial<WebGazerConfig> = {}) {
         } 
       })
       
+      console.log('Camera permission granted')
       // Stop the stream as WebGazer will create its own
       stream.getTracks().forEach(track => track.stop())
       
@@ -132,6 +134,7 @@ export function useWebGazer(config: Partial<WebGazerConfig> = {}) {
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      console.log('Camera permission denied:', errorMessage)
       setState(prev => ({ 
         ...prev, 
         error: `Camera permission denied: ${errorMessage}`,

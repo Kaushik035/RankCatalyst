@@ -71,27 +71,8 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
   })
 
   const [showCalibration, setShowCalibration] = useState(false)
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false)
   const sessionStartTimeRef = useRef<number>(0)
-
-  // WebGazer hook
-  const {
-    isInitialized,
-    isCalibrated: webgazerCalibrated,
-    isTracking,
-    hasPermission,
-    error: webgazerError,
-    confidence,
-    gazePoint,
-    initialize,
-    startTracking,
-    stopTracking,
-    end: endWebGazer
-  } = useWebGazer({
-    minConfidence: 0.6,
-    sampleRate: 60,
-    onGazePoint: handleGazePoint,
-    onError: onError
-  })
 
   // Gaze stream hook
   const {
@@ -116,38 +97,70 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
   // Zone detection hook
   const { zones, isReady: zonesReady, getZoneAt } = useZoneDetection()
 
-  // Handle gaze point updates
-  function handleGazePoint(point: GazePoint) {
-    if (!state.isActive) return
+  // Handle gaze point updates - using ref to avoid dependency issues
+  const handleGazePointRef = useRef<(point: GazePoint) => void>()
+  
+  // Update the ref function when dependencies change
+  useEffect(() => {
+    handleGazePointRef.current = (point: GazePoint) => {
+      if (!state.isActive) return
 
-    // Detect zone
-    const zone = getZoneAt(point.x, point.y)
-    const zoneName = zone ? zone.name : 'other'
+      // Detect zone
+      const zone = getZoneAt(point.x, point.y)
+      const zoneName = zone ? zone.name : 'other'
 
-    // Update gaze point with zone
-    const gazePointWithZone = { ...point, zone: zoneName }
+      // Update gaze point with zone
+      const gazePointWithZone = { ...point, zone: zoneName }
 
-    // Process through stream
-    processGazePoint(gazePointWithZone)
+      // Process through stream
+      processGazePoint(gazePointWithZone)
 
-    // Update analytics
-    setAnalytics(prev => ({
-      ...prev,
-      totalSamples: prev.totalSamples + 1,
-      avgConfidence: (prev.avgConfidence * (prev.totalSamples - 1) + point.confidence) / prev.totalSamples
-    }))
-  }
+      // Update analytics
+      setAnalytics(prev => ({
+        ...prev,
+        totalSamples: prev.totalSamples + 1,
+        avgConfidence: (prev.avgConfidence * (prev.totalSamples - 1) + point.confidence) / prev.totalSamples
+      }))
+    }
+  }, [state.isActive, getZoneAt, processGazePoint])
+
+  // WebGazer hook
+  const {
+    isInitialized,
+    isCalibrated: webgazerCalibrated,
+    isTracking,
+    hasPermission,
+    error: webgazerError,
+    confidence,
+    gazePoint,
+    initialize,
+    startTracking,
+    stopTracking,
+    end: endWebGazer
+  } = useWebGazer({
+    minConfidence: 0.6,
+    sampleRate: 60,
+    onGazePoint: (point) => handleGazePointRef.current?.(point),
+    onError: onError
+  })
 
   // Start session
   const startSession = useCallback(async () => {
     try {
-      // Initialize WebGazer
+      setIsRequestingPermission(true)
+      
+      // Initialize WebGazer (this will request camera permission)
       if (!isInitialized) {
         await initialize()
       }
 
+      // Wait for state to update after initialization
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      // Check permission after initialization
       if (!hasPermission) {
-        onError('Camera permission required for gaze tracking')
+        console.log('Camera permission denied. Please allow camera access in your browser settings.')
+        onError('Camera permission required for gaze tracking. Please allow camera access and try again.')
         return
       }
 
@@ -189,29 +202,10 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
 
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Failed to start session')
+    } finally {
+      setIsRequestingPermission(false)
     }
   }, [isInitialized, hasPermission, initialize, lessonId, deviceInfo, onError])
-
-  // Handle calibration completion
-  const handleCalibrationComplete = useCallback((result: CalibrationResult) => {
-    setShowCalibration(false)
-    setState(prev => ({ ...prev, isCalibrated: true }))
-    
-    setAnalytics(prev => ({
-      ...prev,
-      calibrationAccuracy: result.accuracy
-    }))
-
-    // Start tracking
-    startTracking()
-    startStreaming()
-  }, [startTracking, startStreaming])
-
-  // Handle calibration cancellation
-  const handleCalibrationCancel = useCallback(() => {
-    setShowCalibration(false)
-    endSession()
-  }, [])
 
   // End session
   const endSession = useCallback(async () => {
@@ -254,9 +248,30 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Failed to end session')
     }
-  }, [state.sessionId, stopTracking, stopStreaming, endWebGazer, onSessionEnd, analytics, onError])
+  }, [state.sessionId, stopTracking, stopStreaming, endWebGazer, analytics, onSessionEnd, onError])
 
-  // Update network status
+  // Handle calibration completion
+  const handleCalibrationComplete = useCallback((result: CalibrationResult) => {
+    setShowCalibration(false)
+    setState(prev => ({ ...prev, isCalibrated: true }))
+    
+    setAnalytics(prev => ({
+      ...prev,
+      calibrationAccuracy: result.accuracy
+    }))
+
+    // Start tracking
+    startTracking()
+    startStreaming()
+  }, [startTracking, startStreaming])
+
+  // Handle calibration cancellation
+  const handleCalibrationCancel = useCallback(() => {
+    setShowCalibration(false)
+    endSession()
+  }, [endSession])
+
+  // Update network status - simplified to avoid loops
   useEffect(() => {
     setState(prev => ({
       ...prev,
@@ -268,7 +283,7 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
     }))
   }, [networkStatus, latency])
 
-  // Update analytics
+  // Update analytics - simplified to avoid loops
   useEffect(() => {
     setAnalytics(prev => ({
       ...prev,
@@ -276,40 +291,12 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
     }))
   }, [droppedSamples])
 
-  // Handle WebSocket messages for attention events
-  useEffect(() => {
-    // This would be handled by the WebSocket hook in a real implementation
-    // For now, we'll simulate attention state updates
-    const interval = setInterval(() => {
-      if (state.isActive && isTracking) {
-        // Simulate attention state based on gaze patterns
-        const newAttentionState: AttentionState = {
-          kind: confidence > 0.8 ? 'on_task' : 'inattention',
-          score: confidence,
-          confidence: confidence
-        }
-        
-        setState(prev => ({
-          ...prev,
-          attentionState: newAttentionState
-        }))
-
-        setAnalytics(prev => ({
-          ...prev,
-          attentionEvents: prev.attentionEvents + 1
-        }))
-      }
-    }, 5000)
-
-    return () => clearInterval(interval)
-  }, [state.isActive, isTracking, confidence])
-
-  // Handle errors
+  // Handle errors - simplified to avoid loops
   useEffect(() => {
     if (webgazerError) {
       onError(webgazerError)
     }
-  }, [webgazerError, onError])
+  }, [webgazerError])
 
   // Render session UI
   if (!state.isActive) {
@@ -317,17 +304,20 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <h2 className="text-2xl font-semibold mb-4">Gaze Tracking Session</h2>
-          <p className="text-neutral-300 mb-6">
+          <p className="text-neutral-300 mb-4">
             Start a gaze tracking session to monitor your attention and learning patterns.
+          </p>
+          <p className="text-sm text-neutral-400 mb-6">
+            Camera permission is required for gaze tracking. You'll be prompted to allow camera access when you start the session.
           </p>
           <button
             onClick={startSession}
-            disabled={!isInitialized || !hasPermission}
+            disabled={!isInitialized || isRequestingPermission}
             className="px-6 py-3 bg-brand-600 hover:bg-brand-700 disabled:bg-neutral-600 disabled:cursor-not-allowed rounded-lg text-white font-medium"
           >
             {!isInitialized ? 'Initializing...' : 
-             !hasPermission ? 'Camera Permission Required' : 
-             'Start Session'}
+             isRequestingPermission ? 'Requesting Camera Permission...' :
+             'Start Gaze Session'}
           </button>
         </div>
       </div>
