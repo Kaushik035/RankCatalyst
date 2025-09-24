@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { GazePoint } from './useWebGazer'
 import { useWebSocket } from './ws'
 import { useOfflineQueue } from './offlineQueue'
+import { useAuthStore } from '@/features/auth/store'
 
 export interface GazeStreamConfig {
   maxSampleRate: number
@@ -36,6 +37,7 @@ const DEFAULT_CONFIG: GazeStreamConfig = {
 
 export function useGazeStream(config: Partial<GazeStreamConfig> = {}) {
   const finalConfig = { ...DEFAULT_CONFIG, ...config }
+  const { accessToken } = useAuthStore()
   
   const [state, setState] = useState<GazeStreamState>({
     isStreaming: false,
@@ -181,15 +183,15 @@ export function useGazeStream(config: Partial<GazeStreamConfig> = {}) {
       // Fallback to offline queue
       offlineQueue.push(batchData)
     }
-  }, [wsConnected, isOffline, wsSend, offlineQueue])
+  }, [wsConnected, isOffline, wsSend, offlineQueue, finalConfig.sessionId])
 
   // Send batch via REST API
   const sendBatchViaREST = useCallback(async (batchData: any) => {
-    const response = await fetch(`/api/attention/sessions/${finalConfig.sessionId}/gaze-batch/`, {
+    const response = await fetch(`http://localhost:8000/api/attention/sessions/${finalConfig.sessionId}/gaze-batch/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+        'Authorization': `Bearer ${accessToken}`,
         'Idempotency-Key': crypto.randomUUID()
       },
       body: JSON.stringify(batchData)
@@ -200,7 +202,7 @@ export function useGazeStream(config: Partial<GazeStreamConfig> = {}) {
     }
 
     return response.json()
-  }, [finalConfig.sessionId])
+  }, [finalConfig.sessionId, accessToken])
 
   // Start streaming
   const startStreaming = useCallback(() => {
@@ -232,12 +234,55 @@ export function useGazeStream(config: Partial<GazeStreamConfig> = {}) {
 
     const interval = setInterval(() => {
       if (batchRef.current.length > 0) {
-        flushBatch()
+        // Call flushBatch directly without dependency issues
+        const batch = [...batchRef.current]
+        batchRef.current = []
+
+        // Prepare batch data
+        const batchData = {
+          clientTimebaseMs: clientTimebaseRef.current,
+          samples: batch.map(point => ({
+            t: point.timestamp - clientTimebaseRef.current,
+            x: point.x,
+            y: point.y,
+            c: point.confidence,
+            zone: detectZone(point.x, point.y)
+          }))
+        }
+
+        // Send batch (simplified to avoid dependency issues)
+        if (wsConnected && !isOffline) {
+          wsSend({
+            type: 'gaze_samples',
+            clientTimebaseMs: batchData.clientTimebaseMs,
+            samples: batchData.samples
+          })
+        } else if (!isOffline) {
+          // Send via REST API
+          fetch(`http://localhost:8000/api/attention/sessions/${finalConfig.sessionId}/gaze-batch/`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${accessToken}`,
+              'Idempotency-Key': crypto.randomUUID()
+            },
+            body: JSON.stringify(batchData)
+          }).catch(error => {
+            console.error('Failed to send batch:', error)
+            // Fallback to offline queue
+            offlineQueue.push(batchData)
+          })
+        } else {
+          // Queue for offline
+          offlineQueue.push(batchData)
+        }
+
+        setState(prev => ({ ...prev, batchCount: prev.batchCount + 1 }))
       }
     }, finalConfig.batchInterval)
 
     return () => clearInterval(interval)
-  }, [state.isStreaming, finalConfig.batchInterval, flushBatch])
+  }, [state.isStreaming, finalConfig.batchInterval, wsConnected, isOffline, wsSend, offlineQueue, finalConfig.sessionId, accessToken])
 
   return {
     ...state,

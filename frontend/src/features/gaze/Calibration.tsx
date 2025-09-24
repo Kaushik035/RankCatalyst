@@ -42,7 +42,7 @@ const CALIBRATION_POINTS = [
 ]
 
 const REQUIRED_DWELL_TIME = 500 // milliseconds
-const DWELL_THRESHOLD = 0.1 // distance threshold for dwell detection
+const DWELL_THRESHOLD = 0.2 // distance threshold for dwell detection (increased for easier targeting)
 
 export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: CalibrationProps) {
   const [currentPointIndex, setCurrentPointIndex] = useState(0)
@@ -61,7 +61,9 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
 
   // Start calibration when tracking begins
   useEffect(() => {
+    console.log('Calibration: isTracking =', isTracking, 'isActive =', isActive)
     if (isTracking && !isActive) {
+      console.log('Starting calibration...')
       setIsActive(true)
       setCurrentPointIndex(0)
     }
@@ -69,7 +71,9 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
 
   // Handle gaze point updates
   useEffect(() => {
+    console.log('🎯 Calibration: gazePoint =', gazePoint, 'isActive =', isActive, 'currentPoint =', currentPoint)
     if (!isActive || !gazePoint || !currentPoint) {
+      console.log('❌ Calibration: Missing required data - isActive:', isActive, 'gazePoint:', !!gazePoint, 'currentPoint:', !!currentPoint)
       return
     }
 
@@ -78,8 +82,11 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
       Math.pow(gazePoint.y - currentPoint.y, 2)
     )
 
-    // Check if gaze is within threshold
-    if (distance <= DWELL_THRESHOLD && gazePoint.confidence >= 0.6) {
+    console.log('📏 Calibration: distance =', distance.toFixed(3), 'confidence =', gazePoint.confidence.toFixed(2), 'threshold =', DWELL_THRESHOLD)
+
+    // Check if gaze is within threshold (lowered confidence threshold for easier calibration)
+    if (distance <= DWELL_THRESHOLD && gazePoint.confidence >= 0.3) {
+      console.log('✅ Gaze is within threshold! Starting dwell timer...')
       if (dwellStartTime === null) {
         setDwellStartTime(Date.now())
       } else {
@@ -91,7 +98,9 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
         ))
 
         // Check if dwell time is sufficient
+        console.log('⏱️ Dwell time:', dwellTime, 'ms /', REQUIRED_DWELL_TIME, 'ms')
         if (dwellTime >= REQUIRED_DWELL_TIME) {
+          console.log('🎉 Point completed! Moving to next point...')
           // Mark point as completed
           setPoints(prev => prev.map(point => 
             point.id === currentPoint.id 
@@ -104,14 +113,18 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
             setCurrentPointIndex(prev => prev + 1)
             setDwellStartTime(null)
           } else {
-            // Calibration complete
-            const completedPoints = points.filter(p => p.completed)
-            const accuracy = completedPoints.length / CALIBRATION_POINTS.length
-            
-            onComplete({
-              points: points.map(p => ({ ...p, completed: p.id <= currentPoint.id })),
-              isComplete: true,
-              accuracy
+            // Calibration complete - use callback to get latest state
+            setPoints(prev => {
+              const completedPoints = prev.filter(p => p.completed)
+              const accuracy = completedPoints.length / CALIBRATION_POINTS.length
+              
+              onComplete({
+                points: prev.map(p => ({ ...p, completed: p.id <= currentPoint.id })),
+                isComplete: true,
+                accuracy
+              })
+              
+              return prev // Return unchanged state
             })
           }
         }
@@ -125,7 +138,7 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
           : point
       ))
     }
-  }, [gazePoint, currentPoint, isActive, dwellStartTime, currentPointIndex, onComplete, points])
+  }, [gazePoint, currentPoint, isActive, dwellStartTime, currentPointIndex, onComplete])
 
   // Calculate progress
   const progress = (currentPointIndex + (currentPoint?.completed ? 1 : 0)) / CALIBRATION_POINTS.length
@@ -214,6 +227,20 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
           )
         })}
 
+        {/* Current gaze position indicator */}
+        {gazePoint && (
+          <div
+            className="absolute w-4 h-4 border-2 border-blue-500 rounded-full bg-blue-500/30 pointer-events-none z-40"
+            style={{
+              left: `${gazePoint.x * 100}%`,
+              top: `${gazePoint.y * 100}%`,
+              transform: 'translate(-50%, -50%)'
+            }}
+          >
+            <div className="w-2 h-2 bg-blue-500 rounded-full m-1"></div>
+          </div>
+        )}
+
         {/* Instructions */}
         <div className="absolute bottom-4 left-4 right-4 text-center">
           <p className="text-white text-lg">
@@ -222,6 +249,11 @@ export function Calibration({ onComplete, onCancel, gazePoint, isTracking }: Cal
               : 'Calibration complete!'
             }
           </p>
+          {gazePoint && (
+            <p className="text-blue-400 text-sm mt-2">
+              Gaze: ({Math.round(gazePoint.x * 100)}%, {Math.round(gazePoint.y * 100)}%) - {Math.round(gazePoint.confidence * 100)}%
+            </p>
+          )}
         </div>
 
         {/* Cancel button */}

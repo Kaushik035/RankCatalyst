@@ -98,63 +98,108 @@ export function useWebGazer(config: Partial<WebGazerConfig> = {}) {
     }
   }, [])
 
-  // Initialize WebGazer
-  const initialize = useCallback(async () => {
+  // Initialize WebGazer with camera permission
+  const initialize = useCallback(async (): Promise<boolean> => {
     if (!window.webgazer || isInitializingRef.current) {
-      return
+      return false
     }
 
     isInitializingRef.current = true
     setState(prev => ({ ...prev, error: null }))
 
     try {
-      // Check camera permissions
-      console.log('Requesting camera permission...')
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 640 },
-          height: { ideal: 480 }
-        } 
-      })
+      console.log('Initializing WebGazer with camera access...')
       
-      console.log('Camera permission granted')
-      // Stop the stream as WebGazer will create its own
-      stream.getTracks().forEach(track => track.stop())
+      // First, explicitly request camera permission
+      console.log('Requesting camera permission explicitly...')
+      console.log('Navigator.mediaDevices available:', !!navigator.mediaDevices)
+      console.log('getUserMedia available:', !!navigator.mediaDevices?.getUserMedia)
       
-      setState(prev => ({ ...prev, hasPermission: true }))
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: 'user'
+          } 
+        })
+        
+        console.log('Camera permission granted, stream received')
+        // Stop the stream as WebGazer will create its own
+        stream.getTracks().forEach(track => track.stop())
+        
+        console.log('Setting hasPermission to true before WebGazer initialization')
+        setState(prev => ({ 
+          ...prev, 
+          hasPermission: true
+        }))
+      } catch (permissionError) {
+        console.log('Camera permission request failed:', permissionError)
+        throw permissionError
+      }
+      
+      // Now initialize WebGazer
+      console.log('Initializing WebGazer...')
+      try {
+        await window.webgazer.begin()
+        console.log('WebGazer.begin() completed successfully')
+      } catch (webgazerError) {
+        console.log('WebGazer.begin() failed:', webgazerError)
+        throw webgazerError
+      }
+      
+      // Configure WebGazer (enable for debugging)
+      window.webgazer.showVideoPreview(true)  // Show camera feed
+      window.webgazer.showPredictionPoints(true)  // Show gaze cursor
 
-      // Initialize WebGazer
-      await window.webgazer.begin()
+      console.log('Setting isInitialized to true')
+      setState(prev => ({ 
+        ...prev, 
+        isInitialized: true
+      }))
       
-      // Configure WebGazer
-      window.webgazer.showVideoPreview(false)
-      window.webgazer.showPredictionPoints(false)
-
-      setState(prev => ({ ...prev, isInitialized: true }))
+      console.log('WebGazer initialized successfully with camera access')
+      return true
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      console.log('Camera permission denied:', errorMessage)
+      console.log('WebGazer initialization error:', errorMessage)
+      
+      let userFriendlyMessage = 'Failed to initialize WebGazer.'
+      if (errorMessage.includes('Permission denied') || errorMessage.includes('denied')) {
+        userFriendlyMessage = 'Camera access has been denied. Please allow camera access in your browser settings and refresh the page.'
+      } else if (errorMessage.includes('NotFoundError')) {
+        userFriendlyMessage = 'No camera found. Please connect a camera and try again.'
+      } else if (errorMessage.includes('NotAllowedError')) {
+        userFriendlyMessage = 'Camera access was blocked. Please allow camera access and try again.'
+      }
+      
       setState(prev => ({ 
         ...prev, 
-        error: `Camera permission denied: ${errorMessage}`,
+        error: userFriendlyMessage,
         hasPermission: false
       }))
-      finalConfig.onError?.(errorMessage)
+      finalConfig.onError?.(userFriendlyMessage)
+      return false
     } finally {
       isInitializingRef.current = false
     }
   }, [finalConfig])
 
+
   // Start tracking
   const startTracking = useCallback(() => {
+    console.log('startTracking called, webgazer:', !!window.webgazer, 'isInitialized:', state.isInitialized)
     if (!window.webgazer || !state.isInitialized) {
+      console.log('Cannot start tracking - missing webgazer or not initialized')
       return
     }
 
     // Set up gaze listener
     gazeListenerRef.current = (data: { x: number; y: number }) => {
       const now = Date.now()
+      
+      console.log('🎯 WebGazer gaze data received:', data)
       
       // Throttle based on sample rate
       const minInterval = 1000 / finalConfig.sampleRate
@@ -188,7 +233,59 @@ export function useWebGazer(config: Partial<WebGazerConfig> = {}) {
       }
     }
 
+    console.log('Setting up gaze listener...')
     window.webgazer.setGazeListener(gazeListenerRef.current)
+    console.log('Gaze listener set, updating state to tracking=true')
+    
+    // Test if gaze listener is working
+    setTimeout(() => {
+      console.log('🔍 Testing gaze listener after 2 seconds...')
+      console.log('WebGazer ready:', window.webgazer.isReady())
+      console.log('Gaze listener set:', !!gazeListenerRef.current)
+      
+      // Check if WebGazer has any error messages
+      try {
+        const videoElement = window.webgazer.getVideoElement()
+        console.log('Video element:', videoElement)
+        if (videoElement) {
+          console.log('Video dimensions:', videoElement.videoWidth, 'x', videoElement.videoHeight)
+          console.log('Video playing:', !videoElement.paused)
+        }
+      } catch (error) {
+        console.log('Error checking video element:', error)
+      }
+      
+      // If no gaze data after 5 seconds, try to force WebGazer to start
+      setTimeout(() => {
+        console.log('🚨 No gaze data received after 5 seconds, checking WebGazer status...')
+        console.log('WebGazer ready:', window.webgazer.isReady())
+        console.log('Attempting to restart WebGazer...')
+        
+        // Try to restart WebGazer
+        try {
+          window.webgazer.end()
+          setTimeout(() => {
+            window.webgazer.begin().then(() => {
+              console.log('WebGazer restarted successfully')
+              if (gazeListenerRef.current) {
+                window.webgazer.setGazeListener(gazeListenerRef.current)
+              }
+            }).catch((error) => {
+              console.log('Failed to restart WebGazer:', error)
+            })
+          }, 1000)
+        } catch (error) {
+          console.log('Error restarting WebGazer:', error)
+        }
+      }, 3000)
+    }, 2000)
+    
+    // Check WebGazer's internal state
+    console.log('WebGazer state check:')
+    console.log('- isReady:', window.webgazer.isReady())
+    console.log('- isCalibrated:', (window.webgazer as any).isCalibrated?.())
+    console.log('- isTracking:', (window.webgazer as any).isTracking?.())
+    
     setState(prev => ({ ...prev, isTracking: true }))
   }, [state.isInitialized, finalConfig])
 
@@ -204,8 +301,13 @@ export function useWebGazer(config: Partial<WebGazerConfig> = {}) {
 
   // End WebGazer session
   const end = useCallback(() => {
-    if (window.webgazer) {
-      window.webgazer.end()
+    try {
+      if (window.webgazer) {
+        window.webgazer.end()
+      }
+    } catch (error) {
+      console.log('Error during WebGazer end:', error)
+      // Continue with state update even if end() fails
     }
     
     setState(prev => ({ 
@@ -232,18 +334,68 @@ export function useWebGazer(config: Partial<WebGazerConfig> = {}) {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [state.isTracking])
 
+  // Monitor face detection when tracking
+  useEffect(() => {
+    if (!state.isTracking) return
+
+    const faceCheckInterval = setInterval(() => {
+      if (window.webgazer && window.webgazer.isReady()) {
+        try {
+          // Check if WebGazer can detect faces
+          const faceDetector = (window.webgazer as any).getFaceDetector?.()
+          const faceDetected = faceDetector?.isDetecting?.()
+          console.log('Face detection status:', faceDetected)
+        } catch (error) {
+          console.log('Face detection check failed:', error)
+        }
+      }
+    }, 3000) // Check every 3 seconds
+
+    return () => clearInterval(faceCheckInterval)
+  }, [state.isTracking])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (window.webgazer) {
-        window.webgazer.end()
+      try {
+        if (window.webgazer) {
+          window.webgazer.end()
+        }
+      } catch (error) {
+        console.log('Error during WebGazer cleanup:', error)
+        // Ignore cleanup errors
       }
     }
+  }, [])
+
+  // Reset WebGazer state
+  const reset = useCallback(() => {
+    try {
+      if (window.webgazer) {
+        console.log('Calling WebGazer.end()...')
+        window.webgazer.end()
+        console.log('WebGazer.end() completed')
+      }
+    } catch (error) {
+      console.log('Error calling WebGazer.end():', error)
+      // Continue with reset even if end() fails
+    }
+    
+    setState(prev => ({
+      ...prev,
+      isInitialized: false,
+      hasPermission: false,
+      isTracking: false,
+      error: null
+    }))
+    
+    console.log('WebGazer state reset completed')
   }, [])
 
   return {
     ...state,
     initialize,
+    reset,
     startTracking,
     stopTracking,
     end,

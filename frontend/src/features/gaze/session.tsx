@@ -14,6 +14,7 @@ import { useGazeStream } from './useGazeStream'
 import { useZoneDetection } from './zones'
 import { Calibration, CalibrationResult } from './Calibration'
 import { GazeOverlay, AttentionState, NetworkStatus } from './GazeOverlay'
+import { useAuthStore } from '@/features/auth/store'
 
 export interface SessionConfig {
   lessonId?: string
@@ -43,6 +44,8 @@ export interface SessionState {
 }
 
 export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: SessionConfig) {
+  const { accessToken } = useAuthStore()
+  
   const [state, setState] = useState<SessionState>({
     sessionId: null,
     isActive: false,
@@ -122,7 +125,7 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
         avgConfidence: (prev.avgConfidence * (prev.totalSamples - 1) + point.confidence) / prev.totalSamples
       }))
     }
-  }, [state.isActive, getZoneAt, processGazePoint])
+  }, [state.isActive])
 
   // WebGazer hook
   const {
@@ -134,6 +137,7 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
     confidence,
     gazePoint,
     initialize,
+    reset: resetWebGazer,
     startTracking,
     stopTracking,
     end: endWebGazer
@@ -147,29 +151,47 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
   // Start session
   const startSession = useCallback(async () => {
     try {
+      console.log('Starting gaze session...')
       setIsRequestingPermission(true)
       
-      // Initialize WebGazer (this will request camera permission)
-      if (!isInitialized) {
-        await initialize()
+      // Always reset and reinitialize WebGazer to ensure fresh start
+      console.log('Resetting WebGazer for fresh start...')
+      try {
+        resetWebGazer()
+        console.log('WebGazer reset completed')
+      } catch (error) {
+        console.log('Error during WebGazer reset:', error)
+        // Continue anyway, the state will be reset
       }
-
-      // Wait for state to update after initialization
+      
+      // Wait a moment for reset to complete
       await new Promise(resolve => setTimeout(resolve, 200))
+      
+      // Initialize WebGazer with camera permission
+      console.log('Initializing WebGazer with camera access...')
+      const permissionGranted = await initialize()
+      console.log('WebGazer initialized, permission granted:', permissionGranted)
 
-      // Check permission after initialization
-      if (!hasPermission) {
+      // Wait for WebGazer to initialize
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      console.log('Checking permission status:', hasPermission)
+      console.log('WebGazer initialized status:', isInitialized)
+      console.log('Permission granted from initialize:', permissionGranted)
+      
+      // Check if WebGazer has permission
+      if (!permissionGranted) {
         console.log('Camera permission denied. Please allow camera access in your browser settings.')
         onError('Camera permission required for gaze tracking. Please allow camera access and try again.')
         return
       }
 
       // Create session on backend
-      const response = await fetch('/api/attention/sessions/start/', {
+      const response = await fetch('http://localhost:8000/api/attention/sessions/start/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
           lessonId,
@@ -197,15 +219,25 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
 
       sessionStartTimeRef.current = Date.now()
 
+      // Start WebGazer tracking first
+      console.log('Starting WebGazer tracking...')
+      startTracking()
+      
+      // Wait a moment for tracking to start
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      console.log('WebGazer tracking started, showing calibration')
       // Show calibration
       setShowCalibration(true)
 
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'Failed to start session')
+      console.error('Session start error:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Failed to start session'
+      onError(errorMessage)
     } finally {
       setIsRequestingPermission(false)
     }
-  }, [isInitialized, hasPermission, initialize, lessonId, deviceInfo, onError])
+  }, [initialize, resetWebGazer, lessonId, deviceInfo, onError, accessToken])
 
   // End session
   const endSession = useCallback(async () => {
@@ -227,10 +259,10 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
       }))
 
       // End session on backend
-      await fetch(`/api/attention/sessions/${state.sessionId}/end/`, {
+      await fetch(`http://localhost:8000/api/attention/sessions/${state.sessionId}/end/`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          'Authorization': `Bearer ${accessToken}`
         }
       })
 
@@ -310,15 +342,40 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
           <p className="text-sm text-neutral-400 mb-6">
             Camera permission is required for gaze tracking. You'll be prompted to allow camera access when you start the session.
           </p>
+          <div className="flex flex-col items-center gap-3">
           <button
             onClick={startSession}
-            disabled={!isInitialized || isRequestingPermission}
+            disabled={isRequestingPermission}
             className="px-6 py-3 bg-brand-600 hover:bg-brand-700 disabled:bg-neutral-600 disabled:cursor-not-allowed rounded-lg text-white font-medium"
           >
-            {!isInitialized ? 'Initializing...' : 
-             isRequestingPermission ? 'Requesting Camera Permission...' :
+            {isRequestingPermission ? 'Requesting Camera Permission...' :
              'Start Gaze Session'}
           </button>
+            
+            {webgazerError && (
+              <button
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 rounded text-white text-sm"
+              >
+                Refresh Page & Retry
+              </button>
+            )}
+          </div>
+          
+          {webgazerError && (
+            <div className="mt-4 p-3 bg-red-900/20 border border-red-500/30 rounded-lg">
+              <p className="text-red-400 text-sm">{webgazerError}</p>
+              <div className="text-red-300 text-xs mt-2">
+                <p className="font-medium">To fix this issue:</p>
+                <ul className="list-disc list-inside mt-1 space-y-1">
+                  <li>Click the camera icon in your browser's address bar</li>
+                  <li>Select "Allow" for camera access</li>
+                  <li>Refresh this page and try again</li>
+                  <li>If the issue persists, check your browser's site settings</li>
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -326,6 +383,25 @@ export function GazeSession({ lessonId, deviceInfo, onSessionEnd, onError }: Ses
 
   return (
     <div className="relative min-h-screen">
+      {/* Custom gaze cursor overlay */}
+      {gazePoint && isTracking && (
+        <div
+          className="fixed pointer-events-none z-50"
+          style={{
+            left: `${gazePoint.x * window.innerWidth}px`,
+            top: `${gazePoint.y * window.innerHeight}px`,
+            transform: 'translate(-50%, -50%)'
+          }}
+        >
+          <div className="w-6 h-6 border-2 border-red-500 rounded-full bg-red-500/20 flex items-center justify-center">
+            <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+          </div>
+          <div className="text-xs text-red-500 mt-1 text-center">
+            {Math.round(gazePoint.confidence * 100)}%
+          </div>
+        </div>
+      )}
+
       {/* Calibration overlay */}
       {showCalibration && (
         <Calibration

@@ -185,13 +185,17 @@ export function useWebSocket(config: Partial<WebSocketConfig> = {}) {
       clearTimeout(keepaliveTimeoutRef.current)
     }
 
-    keepaliveTimeoutRef.current = setTimeout(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        pingTimeRef.current = Date.now()
-        send({ type: 'ping' })
-        startKeepalive()
-      }
-    }, finalConfig.keepaliveInterval)
+    const scheduleNext = () => {
+      keepaliveTimeoutRef.current = setTimeout(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          pingTimeRef.current = Date.now()
+          send({ type: 'ping' })
+          scheduleNext()
+        }
+      }, finalConfig.keepaliveInterval)
+    }
+    
+    scheduleNext()
   }, [send, finalConfig.keepaliveInterval])
 
   // Auto-connect on mount
@@ -203,14 +207,14 @@ export function useWebSocket(config: Partial<WebSocketConfig> = {}) {
     return () => {
       disconnect()
     }
-  }, [finalConfig.url, connect, disconnect])
+  }, [finalConfig.url])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       disconnect()
     }
-  }, [disconnect])
+  }, [])
 
   return {
     ...state,
